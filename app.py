@@ -2,7 +2,6 @@ import os
 import random
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
-import pandas as pd
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Alignment, Font
@@ -95,7 +94,7 @@ def generate_tournament():
 
         # Validation des données
         if not all([team_type, player_count, match_count]):
-            return jsonify({"error": "Tous les champs requis (teamType, playerCount, matchCount) doivent être fournis"}), 400
+            return jsonify({"error": "Tous les champs requis doivent être fournis"}), 400
 
         if player_count < 4:
             return jsonify({"error": "Le nombre de joueurs doit être au minimum de 4"}), 400
@@ -111,13 +110,19 @@ def generate_tournament():
             }), 400
 
         # Tirage aléatoire des équipes
-        matches = generate_teams(player_count, team_type, match_count)
+        try:
+            matches = generate_teams(player_count, team_type, match_count)
+        except Exception as e:
+            return jsonify({"error": f"Erreur lors du tirage des équipes : {str(e)}"}), 500
 
         # Création du fichier Excel
-        wb = create_tournament_file(matches, team_type, match_count, player_count)
-        output = BytesIO()
-        wb.save(output)
-        output.seek(0)
+        try:
+            wb = create_tournament_file(matches, team_type, match_count, player_count)
+            output = BytesIO()
+            wb.save(output)
+            output.seek(0)
+        except Exception as e:
+            return jsonify({"error": f"Erreur lors de la création du fichier Excel : {str(e)}"}), 500
 
         return send_file(output, as_attachment=True, download_name='concours_petanque.xlsx')
 
