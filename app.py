@@ -1,15 +1,85 @@
 import os
+import random
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import pandas as pd
 from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Alignment, Font
 
 app = Flask(__name__, static_folder='static')
-CORS(app)  # Ajout de CORS pour éviter les problèmes de requêtes cross-origin
+CORS(app)  # Autoriser les requêtes cross-origin
+
+
+def generate_teams(player_count, team_size, match_count):
+    """Tirage aléatoire des équipes pour un concours"""
+    players = list(range(1, player_count + 1))  # Numéros des joueurs
+    matches = []
+
+    for _ in range(match_count):
+        random.shuffle(players)
+        match_teams = [players[i:i + team_size] for i in range(0, len(players), team_size)]
+        if len(match_teams[-1]) < team_size:  # Cas où une équipe serait incomplète
+            extras = match_teams.pop()
+            for i, player in enumerate(extras):
+                match_teams[i % len(match_teams)].append(player)
+        matches.append(match_teams)
+
+    return matches
+
+
+def create_tournament_file(matches, team_size, match_count, player_count):
+    """Créer un fichier Excel structuré avec les matchs et le classement global"""
+    wb = Workbook()
+
+    # Créer un onglet par partie
+    for match_index, match in enumerate(matches, start=1):
+        ws = wb.create_sheet(title=f"Partie {match_index}")
+        
+        # Entêtes des colonnes
+        ws.append(["Équipe", *[f"Joueur {i+1}" for i in range(team_size)], 
+                   "Résultat Équipe 1", "Résultat Équipe 2", 
+                   "Points Équipe 1", "Points Équipe 2"])
+
+        # Style des entêtes
+        for col in ws.iter_cols(min_row=1, max_row=1, min_col=1, max_col=6 + team_size):
+            for cell in col:
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Ajouter les équipes
+        row_index = 2
+        colors = [PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid"),  # Jaune
+                  PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")]  # Bleu clair
+
+        for team_id, team in enumerate(match, start=1):
+            ws.append([f"Équipe {team_id}", *team, "", "", "", ""])
+            # Appliquer les couleurs
+            for col in range(2, 2 + team_size):
+                ws.cell(row=row_index, column=col).fill = colors[team_id - 1]
+            row_index += 1
+
+    # Onglet Résultat Global
+    ws_global = wb.create_sheet(title="Résultat Global")
+    ws_global.append(["Numéro du joueur", "Total des points", "Nombre de fois 13 points marqués", 
+                      "Classement", "Indication d'ex-aequo"])
+
+    for col in ws_global.iter_cols(min_row=1, max_row=1, min_col=1, max_col=5):
+        for cell in col:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Supprimer la feuille par défaut
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    return wb
+
 
 @app.route('/')
 def index():
     return app.send_static_file('index.html')
+
 
 @app.route('/generate-tournament', methods=['POST'])
 def generate_tournament():
@@ -19,7 +89,7 @@ def generate_tournament():
         if not data:
             return jsonify({"error": "Requête JSON manquante ou mal formée"}), 400
 
-        team_type = data.get('teamType')
+        team_type = data.get('teamType')  # 2 pour doublette, 3 pour triplette
         player_count = data.get('playerCount')
         match_count = data.get('matchCount')
 
@@ -40,20 +110,15 @@ def generate_tournament():
                 "error": f"Pour une {'doublette' if team_type == 2 else 'triplette'}, il faut au moins {min_players} joueurs."
             }), 400
 
-        # Génération du tableau des matchs
-        df = pd.DataFrame({
-            'Match': [f'Match {i + 1}' for i in range(match_count)],
-            'Joueurs': [f'Joueur {i % player_count + 1}' for i in range(match_count)]
-        })
+        # Tirage aléatoire des équipes
+        matches = generate_teams(player_count, team_type, match_count)
 
         # Création du fichier Excel
+        wb = create_tournament_file(matches, team_type, match_count, player_count)
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Concours')
-
+        wb.save(output)
         output.seek(0)
 
-        # Retourner le fichier généré
         return send_file(output, as_attachment=True, download_name='concours_petanque.xlsx')
 
     except Exception as e:
